@@ -1,0 +1,5 @@
+package schemas
+
+class AzureSearchSchemas {
+
+}

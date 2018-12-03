@@ -168,7 +168,7 @@ object URLEncodingUtils {
 object CognitiveServiceUtils {
 
   def setUA(req: HttpRequestBase): Unit = {
-    req.setHeader("User-Agent", "mmlspark/0.13")
+    req.setHeader("User-Agent", "mmlspark/0.15")
   }
 }
 
