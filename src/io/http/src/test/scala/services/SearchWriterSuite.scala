@@ -1,47 +1,72 @@
 package com.microsoft.ml.spark
 
-import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.types.{ArrayType, StringType, StructField, StructType}
+trait HasAzureSearchKey {
+  lazy val azureSearchKey = sys.env("AZURE_SEARCH_KEY")
+}
 
-class SearchWriterSuite extends TestBase {
-  val isb = new IndexSchemaBuilder()
-    .setName("test")
-    .setField(Map("name" -> "id",
-      "type" -> "Edm.String",
-      "key" -> "true",
-      "facetable" -> "false"))
-    .setField(Map("name" -> "fileName",
-      "type" -> "Edm.String",
-      "searchable" -> "false",
-      "filterable" -> "false",
-      "sortable" -> "false",
-      "facetable" -> "false"))
-    .setField(Map("name" -> "text",
-      "type" -> "Edm.String",
-      "filterable" -> "false",
-      "sortable" -> "false",
-      "facetable" -> "false"))
 
-  val index = new IndexSchema(isb.name, isb.fields)
+class SearchWriterSuite extends TestBase with HasAzureSearchKey {
+
+  import session.implicits._
 
   val testData = Seq(
-    Row("upload", "0", Seq(Row("0", "file0", "text0"))),
-    Row("upload", "1", Seq(Row("1", "file1", "text1"))),
-    Row("upload", "2", Seq(Row("2", "file2", "text2"))))
-  val testSchema = List(
-    StructField("searchAction", StringType, true),
-    StructField("key", StringType, true),
-    StructField("fields", ArrayType(StructType(Seq(
-      StructField("id", StringType, true),
-      StructField("fileName", StringType, true),
-      StructField("text", StringType, true)
-    ))), true))
+    ("upload", "0", "file0", "text0"),
+    ("upload", "1", "file1", "text1"),
+    ("upload", "2", "file2", "text2"))
 
-  val testDF = session.sqlContext.createDataFrame(session.sparkContext.parallelize(testData), StructType(testSchema))
-  testDF.show()
+  val testDF = testData.toDF("searchAction", "id", "fileName", "text")
 
-  val w = new SearchWriter()
-    .setKey(sys.env("AZURE_SEARCH_KEY"))
-    .setUrlParams("airotation", index)
-    .write(testDF)
+  val search = new AddDocuments()
+    .setSubscriptionKey(azureSearchKey)
+    .setActionCol("searchAction")
+    .setServiceName("airotation")
+    .setIndexName("test")
+
+  //search.transform(testDF).show(truncate = false)
+
+  test("should create an index and write to it if none exists") {
+    val indexJson =
+      """
+        |{
+        |    "name": "test3",
+        |    "fields": [
+        |      {
+        |        "name": "id",
+        |        "type": "Edm.String",
+        |        "key": true,
+        |        "facetable": false
+        |      },
+        |    {
+        |      "name": "fileName",
+        |      "type": "Edm.String",
+        |      "searchable": false,
+        |      "sortable": false,
+        |      "facetable": false
+        |    },
+        |    {
+        |      "name": "text",
+        |      "type": "Edm.String",
+        |      "filterable": false,
+        |      "sortable": false,
+        |      "facetable": false
+        |    }
+        |    ]
+        |  }
+      """.stripMargin
+
+    //TODO figure out why this cant be a map
+    AzureSearchWriter.write(testDF, List(
+      "subscriptionKey" -> azureSearchKey,
+      "actionCol" -> "searchAction",
+      "serviceName" -> "airotation",
+      "indexName" -> "test3",
+      "indexJson" -> indexJson
+    ).toMap)
+
+    assert(SearchIndex.getStatistics("test3", azureSearchKey, "airotation")._1 == 3)
+
+  }
+
+
 }
+

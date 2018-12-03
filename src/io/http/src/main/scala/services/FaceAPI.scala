@@ -15,8 +15,9 @@ import org.apache.http.impl.client.{CloseableHttpClient, HttpClientBuilder}
 import spray.json.DefaultJsonProtocol._
 import spray.json._
 
-object FaceUtils {
+import scala.util.Try
 
+object RESTHelpers {
   lazy val requestTimeout = 60000
 
   lazy val requestConfig: RequestConfig = RequestConfig.custom()
@@ -39,6 +40,43 @@ object FaceUtils {
         retry(backoffs.tail, f)
     }
   }
+
+  //TODO use this elsewhere
+  def safeSend(request: HttpRequestBase,
+               backoffs: List[Int] = List(100, 500, 1000),
+               expectedCodes:Set[Int] =  Set()): CloseableHttpResponse = {
+
+    retry(List(100, 500, 1000), { () =>
+      val response = client.execute(request)
+      try {
+        if (response.getStatusLine.getStatusCode.toString.startsWith("2") ||
+          expectedCodes(response.getStatusLine.getStatusCode)
+        ) {
+          response
+        } else {
+          val bodyOpt = Try(request match {
+            case er: HttpEntityEnclosingRequestBase => IOUtils.toString(er.getEntity.getContent)
+            case _ => ""
+          }).get
+
+          throw new RuntimeException(
+            s"Failed: response: $response " +
+              s"requestUrl: ${request.getURI}" +
+              s"requestBody: $bodyOpt")
+        }
+      } catch {
+        case e: Exception =>
+          response.close()
+          throw e
+      }
+    })
+  }
+
+}
+
+object FaceUtils {
+
+  import RESTHelpers._
 
   val baseURL = "https://eastus2.api.cognitive.microsoft.com/face/v1.0/"
   val faceKey = sys.env("FACE_API_KEY")

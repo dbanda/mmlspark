@@ -1,46 +1,25 @@
 package com.microsoft.ml.spark
 
-import com.microsoft.ml.spark._
-import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.functions.{col, struct}
-import org.apache.http.client.methods.HttpPost
-import org.apache.http.client.HttpResponseException
-import org.apache.http.entity.StringEntity
-import org.apache.http.impl.client.DefaultHttpClient
-import spray.json._
-import IndexJsonProtocol._
-import org.apache.http.impl.client.HttpClientBuilder
-import org.apache.spark.ml.param.Param
-
-
-// Copyright (C) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License. See LICENSE in project root for information.
-
-package com.microsoft.ml.spark
-
-import java.net.URI
-import java.util.concurrent.TimeoutException
-
-import com.microsoft.ml.spark.HandlingUtils._
 import com.microsoft.ml.spark.cognitive._
-import org.apache.commons.io.IOUtils
-import org.apache.http.client.methods.HttpGet
+import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{AbstractHttpEntity, StringEntity}
-import org.apache.http.impl.client.CloseableHttpClient
-import org.apache.spark.ml.param.{ServiceParam, ServiceParamData}
+import org.apache.log4j.{LogManager, Logger}
+import org.apache.spark.ml.param.Param
 import org.apache.spark.ml.util._
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.functions.udf
+import org.apache.spark.ml.{NamespaceInjections, PipelineModel}
+import org.apache.spark.sql.functions.{array, struct, to_json}
+import org.apache.spark.sql.streaming.DataStreamWriter
 import org.apache.spark.sql.types._
-import spray.json.DefaultJsonProtocol._
+import org.apache.spark.sql.{DataFrame, Dataset, ForeachWriter, Row}
 import spray.json._
 
+import scala.collection.JavaConverters._
 
 object AddDocuments extends ComplexParamsReadable[AddDocuments] with Serializable
 
-trait HasSearchAction extends HasServiceParams {
+trait HasActionCol extends HasServiceParams {
 
-  val searchAction = new ServiceParam[String](this, "searchAction",
+  val actionCol = new Param[String](this, "actionCol",
     """
       |You can combine actions, such as an upload and a delete, in the same batch.
       |
@@ -68,98 +47,157 @@ trait HasSearchAction extends HasServiceParams {
       |  instead and simply set the field explicitly to null.
     """.stripMargin)
 
-  def setSearchAction(v: String): this.type = setScalarParam(searchAction, v)
 
-  def setSearchActionCol(v: String): this.type = setVectorParam(searchAction, v)
+  def setActionCol(v: String): this.type = set(actionCol, v)
+
+  def getActionCol: String = $(actionCol)
+
+}
+
+trait HasIndexName extends HasServiceParams {
+
+  val indexName = new Param[String](this, "indexName", "")
+
+  def setIndexName(v: String): this.type = set(indexName, v)
+
+  def getIndexName: String = $(indexName)
+
+}
+
+trait HasServiceName extends HasServiceParams {
+
+  val serviceName = new Param[String](this, "serviceName", "")
+
+  def setServiceName(v: String): this.type = set(serviceName, v)
+
+  def getServiceName: String = $(serviceName)
+
 }
 
 class AddDocuments(override val uid: String) extends CognitiveServicesBase(uid)
   with HasCognitiveServiceInput with HasInternalJsonOutputParser
-  with HasSearchAction {
+  with HasActionCol with HasServiceName with HasIndexName {
 
-  def this() = this(Identifiable.randomUID("OCR"))
+  def this() = this(Identifiable.randomUID("AddDocuments"))
 
-  def setLocation(v: String): this.type =
-    setUrl(s"https://$v.api.cognitive.microsoft.com/vision/v2.0/ocr")
+  setDefault(actionCol -> "@search.action")
 
-  val keyFieldName = new Param[String](this, "keyFieldName","")
+  override val subscriptionKeyHeaderName = "api-key"
 
-  def setKeyFieldName(v: String): this.type = set(keyFieldName, v)
+  override protected def getInternalTransformer(schema: StructType): PipelineModel = {
+    val stages = Array(
+      Lambda(df =>
+        df.withColumnRenamed(getActionCol, "@search.action")
+          .select(struct(to_json(struct(array(struct("*")).alias("value")))).alias("input"))
+      ),
+      new SimpleHTTPTransformer()
+        .setInputCol("input")
+        .setOutputCol(getOutputCol)
+        .setInputParser(getInternalInputParser(schema))
+        .setOutputParser(getInternalOutputParser(schema))
+        .setHandler(handlingFunc)
+        .setConcurrency(getConcurrency)
+        .setConcurrentTimeout(getConcurrentTimeout)
+        .setErrorCol(getErrorCol)
+    )
 
-  def getKeyFieldName: String = $(keyFieldName)
-
-
-  override def prepareEntity: Row => Option[AbstractHttpEntity] = {row =>
-    val body: Map[String, String] = List(
-      getValueOpt(row, detectOrientation).map(v => "detectOrientation" -> v.toString),
-      Some("url" -> getValue(row, imageUrl)),
-      getValueOpt(row, language).map(lang => "language" -> lang)
-    ).flatten.toMap
-    Some(new StringEntity(body.toJson.compactPrint))
+    NamespaceInjections.pipelineModel(stages)
   }
 
-  override def responseDataType: DataType = OCRResponse.schema
+  override def transform(dataset: Dataset[_]): DataFrame = {
+    if (get(url).isEmpty) {
+      setUrl(s"https://$getServiceName.search.windows.net" +
+        s"/indexes/$getIndexName/docs/index?api-version=2017-11-11")
+    }
+    super.transform(dataset)
+  }
+
+  override def prepareEntity: Row => Option[AbstractHttpEntity] = { row =>
+    Some(new StringEntity(row.getString(0)))
+  }
+
+  override def responseDataType: DataType = ASResponses.schema
 }
 
+private[ml] class StreamMaterializer2 extends ForeachWriter[Row] {
 
-class SearchWriter {
-  private var url: String = _
-  private var key: String = _
+  override def open(partitionId: Long, version: Long): Boolean = true
 
-  def setUrlParams(serviceName: String, index: IndexSchema, apiVersion: Option[String] = None): this.type = {
-    val v = apiVersion.getOrElse("2017-11-11")
-    val i = index.name
-    url = s"https://$serviceName.search.windows.net/indexes/$i/docs/index?api-version=$v"
+  override def process(value: Row): Unit = println(value)
 
-    setIndex(serviceName, index, v)
-    this
+  override def close(errorOrNull: Throwable): Unit = ()
+
+}
+
+object AzureSearchWriter {
+
+  val logger: Logger = LogManager.getRootLogger
+
+
+  private def prepareDF(df: DataFrame, options: Map[String, String] = Map()): DataFrame = {
+    val applicableOptions = Set(
+      "consolidate", "concurrency", "concurrentTimeout", "minibatcher",
+      "maxBatchSize", "batchSize", "buffered", "maxBufferSize", "millisToWait",
+      "subscriptionKey", "actionCol", "serviceName", "indexName", "indexJson",
+      "apiVersion"
+    )
+
+    options.keys.foreach(k =>
+      assert(applicableOptions(k), s"$k not an applicable option ${applicableOptions.toList}"))
+
+    val consolidate = options.get("consolidate").map(_.toBoolean).getOrElse(false)
+
+    val concurrency = options.get("concurrency").map(_.toInt).getOrElse(1)
+    val concurrentTimeout = options.get("concurrentTimeout").map(_.toDouble).getOrElse(30.0)
+
+    val minibatcher = options.getOrElse("minibatcher", "fixed")
+    val maxBatchSize = options.get("maxBatchSize").map(_.toInt).getOrElse(Integer.MAX_VALUE)
+    val batchSize = options.get("batchSize").map(_.toInt).getOrElse(10)
+    val isBuffered = options.get("buffered").map(_.toBoolean).getOrElse(false)
+    val maxBufferSize = options.get("maxBufferSize").map(_.toInt).getOrElse(5)
+    val millisToWait = options.get("millisToWait").map(_.toInt).getOrElse(1000)
+
+
+    val subscriptionKey = options("subscriptionKey")
+    val actionCol = options.getOrElse("actionCol", "@search.action")
+    val serviceName = options("serviceName")
+    val indexName = options("indexName")
+    val indexJson = options("indexJson")
+    val apiVersion = options.getOrElse("apiVersion", "2017-11-11")
+
+    val df2 = if (consolidate) {
+      new PartitionConsolidator().transform(df)
+    } else {
+      df
+    }
+
+    SearchIndex.createIfNoneExists(df.schema, subscriptionKey,serviceName, indexJson, apiVersion)
+
+    new AddDocuments()
+      .setSubscriptionKey(subscriptionKey)
+      .setServiceName(serviceName)
+      .setIndexName(indexName)
+      .setConcurrency(concurrency)
+      .setConcurrentTimeout(concurrentTimeout)
+      .setActionCol(actionCol)
+      .transform(df)
   }
 
-  def setKey(k: String): this.type = {
-    key = k
-    this
+  def stream(df: DataFrame, options: Map[String, String] = Map()): DataStreamWriter[Row] = {
+    prepareDF(df, options).writeStream.foreach(new StreamMaterializer2)
   }
 
-  lazy val client = HttpClientBuilder.create().build()
-
-  private def setIndex(serviceName: String, index: IndexSchema, apiVersion: String): Int = {
-    val index_url = s"https://$serviceName.search.windows.net/indexes?api-version=$apiVersion"
-    val schema_json = index.toJson.prettyPrint
-    val post = new HttpPost(index_url)
-    post.setHeader("Content-Type", "application/json")
-    post.setHeader("api-key", key)
-    post.setEntity(new StringEntity(schema_json))
-    val response = client.execute(post)
-    response.getStatusLine.getStatusCode
+  def write(df: DataFrame, options: Map[String, String] = Map()): Unit = {
+    prepareDF(df, options).foreachPartition(it => it.foreach(row => println(row)))
   }
 
-  private def prepareDF(df: DataFrame): DataFrame = {
-    new SimpleHTTPTransformer()
-      .setUrl(url)
-      .setInputParser(new JSONInputParser()
-        .setHeaders(Map(
-          "Content-Type" -> "application/json",
-          "api-key" -> key))
-        .setUrl(url))
-      .setOutputParser(new CustomOutputParser().setUDF({response: HTTPResponseData =>
-        /*val status = response.statusLine
-        val code = status.statusCode
-        if (code != 200) {
-          val content = response.entity.map(x => new String(x.content)).getOrElse("")
-          throw new HttpResponseException(code, s"Request failed with \n" +
-            s"code: $code, \n" +
-            s"reason: ${status.reasonPhrase}, \n" +
-            s"content: $content")
-        }*/
-        println(response.statusLine.statusCode)
-      }))
-      .setInputCol("input")
-      .setOutputCol("output")
-      .transform(df.select(
-        struct(df.columns.map(col): _*).alias("input")))
+  def stream(df: DataFrame, options: java.util.HashMap[String, String]): DataStreamWriter[Row] = {
+    stream(df, options.asScala.toMap)
   }
 
-  def write(df: DataFrame): Unit = {
-    prepareDF(df).foreachPartition(it => it.foreach(_ => ()))
+  def write(df: DataFrame,
+            options: java.util.HashMap[String, String]): Unit = {
+    write(df, options.asScala.toMap)
   }
+
 }
