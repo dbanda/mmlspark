@@ -40,9 +40,13 @@ case class IndexField(name: String,
 
 case class IndexStats(documentCount: Int, storageSize: Int)
 
+case class IndexList(`@odata.context`: String, value: Seq[IndexName])
+case class IndexName(name: String)
+
 object AzureSearchProtocol {
   implicit val ifEnc = jsonFormat12(IndexField.apply)
   implicit val iiEnc = jsonFormat10(IndexInfo.apply)
   implicit val isEnc = jsonFormat2(IndexStats.apply)
-
+  implicit val inEnc = jsonFormat1(IndexName.apply)
+  implicit val ilEnc = jsonFormat2(IndexList.apply)
 }

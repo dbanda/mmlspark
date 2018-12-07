@@ -12,15 +12,16 @@ class SearchWriterSuite extends TestBase with HasAzureSearchKey {
   val testData = Seq(
     ("upload", "0", "file0", "text0"),
     ("upload", "1", "file1", "text1"),
-    ("upload", "2", "file2", "text2"))
+    ("upload", "2", "file2", "text2"),
+    ("upload", "3", "file3", "text3"))
 
   val testDF = testData.toDF("searchAction", "id", "fileName", "text")
 
-  val search = new AddDocuments()
-    .setSubscriptionKey(azureSearchKey)
-    .setActionCol("searchAction")
-    .setServiceName("airotation")
-    .setIndexName("test")
+//  val search = new AddDocuments()
+//    .setSubscriptionKey(azureSearchKey)
+//    .setActionCol("searchAction")
+//    .setServiceName("airotation")
+//    .setIndexName("test")
 
   //search.transform(testDF).show(truncate = false)
 
@@ -28,7 +29,7 @@ class SearchWriterSuite extends TestBase with HasAzureSearchKey {
     val indexJson =
       """
         |{
-        |    "name": "test3",
+        |    "name": "test2",
         |    "fields": [
         |      {
         |        "name": "id",
@@ -59,11 +60,11 @@ class SearchWriterSuite extends TestBase with HasAzureSearchKey {
       "subscriptionKey" -> azureSearchKey,
       "actionCol" -> "searchAction",
       "serviceName" -> "airotation",
-      "indexName" -> "test3",
+      "indexName" -> "test2",
       "indexJson" -> indexJson
     ).toMap)
 
-    assert(SearchIndex.getStatistics("test3", azureSearchKey, "airotation")._1 == 3)
+    assert(SearchIndex.getStatistics("test2", azureSearchKey, "airotation")._1 == 4)
 
   }
 

@@ -27,13 +27,17 @@ object SearchIndex {
                          apiVersion: String = "2017-11-11"): Unit = {
     val indexUrl = s"https://$serviceName.search.windows.net/indexes?api-version=$apiVersion"
     val indexName = parseIndexJson(indexJson).name.get
-    val getIndexRequest = new HttpGet(
-      s"https://$serviceName.search.windows.net/indexes/$indexName?api-version=$apiVersion")
-    getIndexRequest.setHeader("api-key", key)
-    val getIndexResponse = safeSend(getIndexRequest, expectedCodes = Set(404))
 
-    //TODO change the above to a list request
-    if (getIndexResponse.getStatusLine.getStatusCode == 404) {
+    val indexListRequest = new HttpGet(
+      s"https://$serviceName.search.windows.net/indexes?api-version=$apiVersion&$$select=name"
+    )
+    indexListRequest.setHeader("api-key", key)
+    val indexListResponse = safeSend(indexListRequest)
+    val indexList = IOUtils.toString(indexListResponse.getEntity.getContent, "utf-8").parseJson.convertTo[IndexList]
+    val existingIndexNames = for (i <- indexList.value.seq) yield i.name
+    val condition = !(existingIndexNames.contains(indexName))
+
+    if (condition) {
       val createRequest = new HttpPost(s"https://$serviceName.search.windows.net/indexes?api-version=$apiVersion")
       createRequest.setHeader("Content-Type", "application/json")
       createRequest.setHeader("api-key", key)
@@ -61,6 +65,5 @@ object SearchIndex {
 
     (stats.documentCount, stats.storageSize)
   }
-
 
 }
