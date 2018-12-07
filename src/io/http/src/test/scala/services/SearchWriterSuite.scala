@@ -17,57 +17,71 @@ class SearchWriterSuite extends TestBase with HasAzureSearchKey {
 
   val testDF = testData.toDF("searchAction", "id", "fileName", "text")
 
-//  val search = new AddDocuments()
-//    .setSubscriptionKey(azureSearchKey)
-//    .setActionCol("searchAction")
-//    .setServiceName("airotation")
-//    .setIndexName("test")
+  val indexJson =
+    """
+      |{
+      |    "name": "test2",
+      |    "fields": [
+      |      {
+      |        "name": "id",
+      |        "type": "Edm.String",
+      |        "key": true,
+      |        "facetable": false
+      |      },
+      |    {
+      |      "name": "fileName",
+      |      "type": "Edm.String",
+      |      "searchable": false,
+      |      "sortable": false,
+      |      "facetable": false
+      |    },
+      |    {
+      |      "name": "text",
+      |      "type": "Edm.String",
+      |      "filterable": false,
+      |      "sortable": false,
+      |      "facetable": false
+      |    }
+      |    ]
+      |  }
+    """.stripMargin
 
-  //search.transform(testDF).show(truncate = false)
-
-  test("should create an index and write to it if none exists") {
-    val indexJson =
-      """
-        |{
-        |    "name": "test4",
-        |    "fields": [
-        |      {
-        |        "name": "id",
-        |        "type": "Edm.String",
-        |        "key": true,
-        |        "facetable": false
-        |      },
-        |    {
-        |      "name": "fileName",
-        |      "type": "Edm.String",
-        |      "searchable": false,
-        |      "sortable": false,
-        |      "facetable": false
-        |    },
-        |    {
-        |      "name": "text",
-        |      "type": "Edm.String",
-        |      "filterable": false,
-        |      "sortable": false,
-        |      "facetable": false
-        |    }
-        |    ]
-        |  }
-      """.stripMargin
+  test("create new index and add docs") {
 
     //TODO figure out why this cant be a map
     AzureSearchWriter.write(testDF, List(
       "subscriptionKey" -> azureSearchKey,
       "actionCol" -> "searchAction",
       "serviceName" -> "airotation",
-      "indexName" -> "test4",
       "indexJson" -> indexJson
     ).toMap)
 
-    assert(SearchIndex.getStatistics("test4", azureSearchKey, "airotation")._1 == 4)
-
+    assert(SearchIndex.getStatistics("test2", azureSearchKey, "airotation")._1 == 4)
   }
 
+  test("push docs to existing index") {
+    val addData = Seq(
+      ("upload", "4", "file4", "text4"),
+      ("upload", "5", "file5", "text5"),
+      ("upload", "6", "file6", "text6"),
+      ("upload", "7", "file7", "text7"))
+
+    val addDF = addData.toDF("searchAction", "id", "fileName", "text")
+
+    AzureSearchWriter.write(addDF, List(
+      "subscriptionKey" -> azureSearchKey,
+      "actionCol" -> "searchAction",
+      "serviceName" -> "airotation",
+      "indexJson" -> indexJson
+    ).toMap)
+
+    assert(SearchIndex.getStatistics("test2", azureSearchKey, "airotation")._1 == 8)
+  }
 
 }
+
+
+
+
+
 

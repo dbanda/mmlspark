@@ -131,10 +131,9 @@ private[ml] class StreamMaterializer2 extends ForeachWriter[Row] {
 
 }
 
-object AzureSearchWriter {
+object AzureSearchWriter extends IndexParser {
 
   val logger: Logger = LogManager.getRootLogger
-
 
   private def prepareDF(df: DataFrame, options: Map[String, String] = Map()): DataFrame = {
     val applicableOptions = Set(
@@ -163,9 +162,9 @@ object AzureSearchWriter {
     val subscriptionKey = options("subscriptionKey")
     val actionCol = options.getOrElse("actionCol", "@search.action")
     val serviceName = options("serviceName")
-    val indexName = options("indexName")
     val indexJson = options("indexJson")
     val apiVersion = options.getOrElse("apiVersion", "2017-11-11")
+    val indexName = parseIndexJson(indexJson).name.get
 
     val df2 = if (consolidate) {
       new PartitionConsolidator().transform(df)

@@ -9,16 +9,17 @@ import org.apache.spark.sql.types._
 import spray.json._
 
 import scala.util.{Failure, Success, Try}
+import AzureSearchProtocol._
 
-object SearchIndex {
-
-  val logger: Logger = LogManager.getRootLogger
-
-  import AzureSearchProtocol._
-
-  private def parseIndexJson(str: String): IndexInfo = {
+trait IndexParser {
+  def parseIndexJson(str: String): IndexInfo = {
     str.parseJson.convertTo[IndexInfo]
   }
+}
+
+object SearchIndex extends IndexParser {
+
+  val logger: Logger = LogManager.getRootLogger
 
   import RESTHelpers._
 
