@@ -25,18 +25,20 @@ case class IndexInfo(
                     corsOptions: Option[Array[String]]
                     )
 
-case class IndexField(name: String,
-                 `type`: String,
-                 searchable: Option[Boolean],
-                 filterable: Option[Boolean],
-                 sortable: Option[Boolean],
-                 facetable: Option[Boolean],
-                 key: Option[Boolean],
-                 retrievable: Option[Boolean],
-                 analyzer: Option[String],
-                 searchAnalyzer: Option[String],
-                 indexAnalyzer: Option[String],
-                 synonymMaps:Option[String])
+case class IndexField(
+                     name: String,
+                     `type`: String,
+                     searchable: Option[Boolean],
+                     filterable: Option[Boolean],
+                     sortable: Option[Boolean],
+                     facetable: Option[Boolean],
+                     key: Option[Boolean],
+                     retrievable: Option[Boolean],
+                     analyzer: Option[String],
+                     searchAnalyzer: Option[String],
+                     indexAnalyzer: Option[String],
+                     synonymMap: Option[String]
+                     )
 
 case class IndexStats(documentCount: Int, storageSize: Int)
 

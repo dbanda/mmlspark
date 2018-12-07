@@ -29,7 +29,7 @@ class SearchWriterSuite extends TestBase with HasAzureSearchKey {
     val indexJson =
       """
         |{
-        |    "name": "test2",
+        |    "name": "test4",
         |    "fields": [
         |      {
         |        "name": "id",
@@ -60,11 +60,11 @@ class SearchWriterSuite extends TestBase with HasAzureSearchKey {
       "subscriptionKey" -> azureSearchKey,
       "actionCol" -> "searchAction",
       "serviceName" -> "airotation",
-      "indexName" -> "test2",
+      "indexName" -> "test4",
       "indexJson" -> indexJson
     ).toMap)
 
-    assert(SearchIndex.getStatistics("test2", azureSearchKey, "airotation")._1 == 4)
+    assert(SearchIndex.getStatistics("test4", azureSearchKey, "airotation")._1 == 4)
 
   }
 

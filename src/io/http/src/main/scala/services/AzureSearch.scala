@@ -84,6 +84,8 @@ class AddDocuments(override val uid: String) extends CognitiveServicesBase(uid)
 
   override val subscriptionKeyHeaderName = "api-key"
 
+//  val mb = new FixedMiniBatchTransformer().setBuffered(false).setBatchSize(2)
+
   override protected def getInternalTransformer(schema: StructType): PipelineModel = {
     val stages = Array(
       Lambda(df =>
@@ -123,7 +125,7 @@ private[ml] class StreamMaterializer2 extends ForeachWriter[Row] {
 
   override def open(partitionId: Long, version: Long): Boolean = true
 
-  override def process(value: Row): Unit = println(value)
+  override def process(value: Row): Unit = ()
 
   override def close(errorOrNull: Throwable): Unit = ()
 
