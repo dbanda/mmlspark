@@ -1,19 +1,18 @@
 package com.microsoft.ml.spark
 
 import com.microsoft.ml.spark.cognitive._
-import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{AbstractHttpEntity, StringEntity}
 import org.apache.log4j.{LogManager, Logger}
-import org.apache.spark.ml.param.Param
+import org.apache.spark.ml.param._
 import org.apache.spark.ml.util._
 import org.apache.spark.ml.{NamespaceInjections, PipelineModel}
-import org.apache.spark.sql.functions.{array, struct, to_json}
+import org.apache.spark.sql.functions.{array, col, struct, to_json}
 import org.apache.spark.sql.streaming.DataStreamWriter
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Dataset, ForeachWriter, Row}
-import spray.json._
 
 import scala.collection.JavaConverters._
+import scala.util.{Try, Success, Failure}
 
 object AddDocuments extends ComplexParamsReadable[AddDocuments] with Serializable
 
@@ -76,7 +75,7 @@ trait HasServiceName extends HasServiceParams {
 
 class AddDocuments(override val uid: String) extends CognitiveServicesBase(uid)
   with HasCognitiveServiceInput with HasInternalJsonOutputParser
-  with HasActionCol with HasServiceName with HasIndexName {
+  with HasActionCol with HasServiceName with HasIndexName with HasBatchSize {
 
   def this() = this(Identifiable.randomUID("AddDocuments"))
 
@@ -84,13 +83,19 @@ class AddDocuments(override val uid: String) extends CognitiveServicesBase(uid)
 
   override val subscriptionKeyHeaderName = "api-key"
 
-//  val mb = new FixedMiniBatchTransformer().setBuffered(false).setBatchSize(2)
+  setDefault(batchSize->100)
 
   override protected def getInternalTransformer(schema: StructType): PipelineModel = {
     val stages = Array(
       Lambda(df =>
         df.withColumnRenamed(getActionCol, "@search.action")
-          .select(struct(to_json(struct(array(struct("*")).alias("value")))).alias("input"))
+          .select(struct("*").alias("arr"))
+      ),
+      new FixedMiniBatchTransformer().setBuffered(false).setBatchSize(getBatchSize),
+      Lambda(df =>
+        df.select(struct(
+          to_json(struct(col("arr").alias("value")))
+        ).alias("input"))
       ),
       new SimpleHTTPTransformer()
         .setInputCol("input")
@@ -137,27 +142,12 @@ object AzureSearchWriter extends IndexParser {
 
   private def prepareDF(df: DataFrame, options: Map[String, String] = Map()): DataFrame = {
     val applicableOptions = Set(
-      "consolidate", "concurrency", "concurrentTimeout", "minibatcher",
-      "maxBatchSize", "batchSize", "buffered", "maxBufferSize", "millisToWait",
       "subscriptionKey", "actionCol", "serviceName", "indexName", "indexJson",
-      "apiVersion"
+      "apiVersion", "batchSize"
     )
 
     options.keys.foreach(k =>
       assert(applicableOptions(k), s"$k not an applicable option ${applicableOptions.toList}"))
-
-    val consolidate = options.get("consolidate").map(_.toBoolean).getOrElse(false)
-
-    val concurrency = options.get("concurrency").map(_.toInt).getOrElse(1)
-    val concurrentTimeout = options.get("concurrentTimeout").map(_.toDouble).getOrElse(30.0)
-
-    val minibatcher = options.getOrElse("minibatcher", "fixed")
-    val maxBatchSize = options.get("maxBatchSize").map(_.toInt).getOrElse(Integer.MAX_VALUE)
-    val batchSize = options.get("batchSize").map(_.toInt).getOrElse(10)
-    val isBuffered = options.get("buffered").map(_.toBoolean).getOrElse(false)
-    val maxBufferSize = options.get("maxBufferSize").map(_.toInt).getOrElse(5)
-    val millisToWait = options.get("millisToWait").map(_.toInt).getOrElse(1000)
-
 
     val subscriptionKey = options("subscriptionKey")
     val actionCol = options.getOrElse("actionCol", "@search.action")
@@ -165,23 +155,47 @@ object AzureSearchWriter extends IndexParser {
     val indexJson = options("indexJson")
     val apiVersion = options.getOrElse("apiVersion", "2017-11-11")
     val indexName = parseIndexJson(indexJson).name.get
+    val batchSize = options.getOrElse("batchSize", "100").toInt
 
-    val df2 = if (consolidate) {
-      new PartitionConsolidator().transform(df)
-    } else {
-      df
+    SearchIndex.createIfNoneExists(subscriptionKey,serviceName, indexJson, apiVersion)
+
+    checkSchemaParity(df, indexJson) match {
+      case Success(_) => ()
+      case Failure(e) =>
+        println("Exception: Schema mismatch found in dataframe and json")
+        throw e
     }
-
-    SearchIndex.createIfNoneExists(df.schema, subscriptionKey,serviceName, indexJson, apiVersion)
 
     new AddDocuments()
       .setSubscriptionKey(subscriptionKey)
       .setServiceName(serviceName)
       .setIndexName(indexName)
-      .setConcurrency(concurrency)
-      .setConcurrentTimeout(concurrentTimeout)
       .setActionCol(actionCol)
+      .setBatchSize(batchSize)
       .transform(df)
+  }
+
+  private def checkSchemaParity(df: DataFrame, indexJson: String): Try[Boolean] = {
+    val edmTypes = Map("Edm.String" -> "string",
+      "Collection(Edm.String)" -> "array<string>",
+      "Edm.Boolean" -> "boolean",
+      "Edm.Int64" -> "bigint",
+      "Edm.Int32" -> "int",
+      "Edm.Double" -> "double",
+      "Edm.DateTimeOffset" -> "string",
+      "Edm.GeographyPoint" -> "string")
+    val fieldNames = parseIndexJson(indexJson).fields.map(f => f.name).toList.map(n => n.toString)
+    val fieldTypes = parseIndexJson(indexJson).fields.map(f => f.`type`).toList.map(t => edmTypes.get(t.toString).get)
+
+    // drop the first comparison element because the first field in the dataframe corresponds to the search action
+    val isValid = df.schema.toList.drop(1).map(field =>
+        (fieldNames.contains(field.name) && fieldTypes.contains(field.dataType.simpleString))
+      )
+
+    val result = isValid.foldLeft(true)(_&&_)
+
+    if (result) {Success(result)}
+    else {Failure(new IllegalArgumentException)}
   }
 
   def stream(df: DataFrame, options: Map[String, String] = Map()): DataStreamWriter[Row] = {
@@ -189,7 +203,7 @@ object AzureSearchWriter extends IndexParser {
   }
 
   def write(df: DataFrame, options: Map[String, String] = Map()): Unit = {
-    prepareDF(df, options).foreachPartition(it => it.foreach(row => println(row)))
+    prepareDF(df, options).foreachPartition(it => it.foreach(_ => ()))
   }
 
   def stream(df: DataFrame, options: java.util.HashMap[String, String]): DataStreamWriter[Row] = {

@@ -44,7 +44,8 @@ object RESTHelpers {
   //TODO use this elsewhere
   def safeSend(request: HttpRequestBase,
                backoffs: List[Int] = List(100, 500, 1000),
-               expectedCodes:Set[Int] =  Set()): CloseableHttpResponse = {
+               expectedCodes:Set[Int] =  Set(),
+               close: Boolean = true): CloseableHttpResponse = {
 
     retry(List(100, 500, 1000), { () =>
       val response = client.execute(request)
@@ -54,20 +55,26 @@ object RESTHelpers {
         ) {
           response
         } else {
-          val bodyOpt = Try(request match {
+          val requestBodyOpt = Try(request match {
             case er: HttpEntityEnclosingRequestBase => IOUtils.toString(er.getEntity.getContent)
             case _ => ""
           }).get
 
+          val responseBodyOpt = Try(IOUtils.toString(response.getEntity.getContent)).getOrElse("")
+
           throw new RuntimeException(
-            s"Failed: response: $response " +
-              s"requestUrl: ${request.getURI}" +
-              s"requestBody: $bodyOpt")
+            s"Failed: " +
+              s"\n\t response: $response " +
+              s"\n\t requestUrl: ${request.getURI}" +
+              s"\n\t requestBody: $requestBodyOpt" +
+              s"\n\t responseBody: $responseBodyOpt")
         }
       } catch {
         case e: Exception =>
           response.close()
           throw e
+      } finally {
+        if (close) {response.close()}
       }
     })
   }
