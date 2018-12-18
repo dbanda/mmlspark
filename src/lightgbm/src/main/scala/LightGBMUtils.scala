@@ -8,6 +8,7 @@ import java.net.{InetAddress, ServerSocket, Socket}
 import java.util.concurrent.Executors
 
 import com.microsoft.ml.lightgbm._
+import com.microsoft.ml.spark.schema.SparkSchema
 import org.apache.http.conn.util.InetAddressUtils
 import org.apache.spark.{BlockManagerUtils, SparkEnv, TaskContext}
 import org.apache.spark.ml.PipelineModel
@@ -31,8 +32,9 @@ object LightGBMUtils {
   /** Loads the native shared object binaries lib_lightgbm.so and lib_lightgbm_swig.so
     */
   def initializeNativeLibrary(): Unit = {
-    new NativeLoader("/com/microsoft/ml/lightgbm").loadLibraryByName("_lightgbm")
-    new NativeLoader("/com/microsoft/ml/lightgbm").loadLibraryByName("_lightgbm_swig")
+    val osPrefix = NativeLoader.getOSPrefix()
+    new NativeLoader("/com/microsoft/ml/lightgbm").loadLibraryByName(osPrefix + "_lightgbm")
+    new NativeLoader("/com/microsoft/ml/lightgbm").loadLibraryByName(osPrefix + "_lightgbm_swig")
   }
 
   def featurizeData(dataset: Dataset[_], labelColumn: String, featuresColumn: String): PipelineModel = {
@@ -54,6 +56,13 @@ object LightGBMUtils {
       lightgbmlib.LGBM_BoosterLoadModelFromString(lgbModelString, numItersOut, boosterOutPtr),
       "Booster LoadFromString")
     lightgbmlib.voidpp_value(boosterOutPtr)
+  }
+
+  def getCategoricalIndexes(df: DataFrame, categoricalColumns: Array[String]): Array[Int]  = {
+    val isCategorical = df.columns.map(columnName => (columnName, SparkSchema.isCategorical(df, columnName)))
+      .union(categoricalColumns.map(columnName => (columnName, true))).toMap
+    df.schema.fieldNames.zipWithIndex
+      .filter(name => isCategorical.contains(name._1) && isCategorical(name._1)).map(_._2)
   }
 
   /**
