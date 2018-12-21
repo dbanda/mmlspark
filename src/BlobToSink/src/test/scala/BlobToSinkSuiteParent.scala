@@ -15,8 +15,9 @@ import com.microsoft.ml.spark.schema.ImageSchema
 import org.apache.commons.codec.binary.Base64
 import org.apache.commons.io.IOUtils
 import org.apache.spark.image.ImageFileFormat
-import org.apache.spark.sql.functions.{col, udf, to_json}
+import org.apache.spark.sql.functions.{col, udf, to_json,lit}
 import org.apache.spark.sql.types.StringType
+import scala.math.random
 
 
 //import com.microsoft.ml.spark.ModelDownloader
@@ -30,6 +31,26 @@ class BlobToSinkSuiteParent extends TestBase
   with HasAzureSearchKey with IndexLister with FileReaderUtils {
 
   private val testServiceName = "airotation"
+  import session.implicits._
+
+  private def deleteAllIndices(): Unit = {
+    import RESTHelpers._
+
+    val indexNames = getExisting(azureSearchKey, testServiceName)
+    indexNames.foreach(n =>
+    { val deleteRequest = new HttpDelete(s"https://$testServiceName.search.windows.net/indexes/$n?api-version=2017-11-11")
+      deleteRequest.setHeader("api-key", azureSearchKey)
+      val response = safeSend(deleteRequest)
+      val status = response.getStatusLine.getStatusCode
+      assert(status == 204)
+    })
+  }
+
+  private def createTestData(numDocs: Int): DataFrame = {
+    val docs = for (i <- 0 until numDocs)
+      yield ("upload", s"$i", s"file$i")
+    docs.seq.toDF("searchAction", "path", "features")
+  }
 
   private def createSimpleIndexJson(indexName: String): String = {
     s"""
@@ -37,22 +58,15 @@ class BlobToSinkSuiteParent extends TestBase
        |    "name": "$indexName",
        |    "fields": [
        |      {
-       |        "name": "id",
+       |        "name": "path",
        |        "type": "Edm.String",
        |        "key": true,
        |        "facetable": false
        |      },
        |    {
-       |      "name": "path",
-       |      "type": "Edm.String",
-       |      "searchable": false,
-       |      "sortable": false,
-       |      "facetable": false
-       |    },
-       |    {
        |      "name": "features",
        |      "type": "Edm.String",
-       |      "filterable": false,
+       |      "searchable": false,
        |      "sortable": false,
        |      "facetable": false
        |    }
@@ -66,15 +80,18 @@ class BlobToSinkSuiteParent extends TestBase
     existing.isEmpty match {
       case true => "test-0"
       case false =>
-        val n = existing.sorted.last.split("-").last.toInt + 1
+        val n = (random*30).toInt
         s"test-$n"
     }
   }
 
   test("Read from blob run resnet and then write to index") {
+    println("nuking existing indices")
+    deleteAllIndices()
+
     println("reading met images from blob")
-    val blobkey = "gjsT+4WV9Dl8+bRhhiF5CPJI2fOqwXwllHrU4GAsLmOCMe+0q6ZoUpPkYTSQeH+Vo/HBuBoRcHCLDcjQnN/IVg=="
-    // mmlspark doesn't allow hadoop-azure so need to rad locallly for now
+//    val blobkey = "gjsT+4WV9Dl8+bRhhiF5CPJI2fOqwXwllHrU4GAsLmOCMe+0q6ZoUpPkYTSQeH+Vo/HBuBoRcHCLDcjQnN/IVg=="
+
 //    sc.hadoopConfiguration.set("fs.azure", "org.apache.hadoop.fs.azure.NativeAzureFileSystem")
 //    sc.hadoopConfiguration.set("fs.wasb.impl", "org.apache.hadoop.fs.azure.NativeAzureFileSystem")
 //    sc.hadoopConfiguration.set("fs.wasbs.impl", "org.apache.hadoop.fs.azure.NativeAzureFileSystem")
@@ -83,7 +100,7 @@ class BlobToSinkSuiteParent extends TestBase
 //    val metartwork = "wasbs://met-artworks@airotationstore.blob.core.windows.net/artwork_images/40lowRes512x512/"
 //    val metimages = session.read.format("image").load(metartwork)
 
-    val metimages = session.readImages(groceriesDirectory, recursive = true)
+    val metimages = session.readImages(cifarDirectory, recursive = true)
 
 
     println("downloading model")
@@ -110,10 +127,17 @@ class BlobToSinkSuiteParent extends TestBase
 
     val features = resnet.transform(metimages)
 
-    val pathWithFeatures = features.withColumn("path", col("image.path")).drop("image")
+    val pathWithFeatures = features
+      .withColumn("path", col("image.path"))
+      .drop("image")
+      .withColumn("searchAction", lit("upload"))
+      .withColumn("features", col("features").cast(StringType))
     println("path with the features")
+    pathWithFeatures.printSchema()
     println(pathWithFeatures)
+    println(pathWithFeatures.count())
 
+//    val df = createTestData(1000)
     val df = pathWithFeatures
     val in = generateIndexName()
     println(s"Creating new index $in and addingdocs")
