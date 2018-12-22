@@ -151,7 +151,7 @@ class BlobToSinkSuiteParent extends TestBase
     orderedPathWithFeatures.printSchema()
     println(orderedPathWithFeatures)
     println(orderedPathWithFeatures.count())
-    orderedPathWithFeatures.show(6)
+    orderedPathWithFeatures.show()
 //    val testdata = createTestData(6)
 //    testdata.printSchema()
 //    testdata.show(6)
@@ -189,7 +189,7 @@ class BlobToSinkSuiteParent extends TestBase
       sqdist(strToVec(feats), strToVec(cur_features))
     })
 
-    features.withColumn("similarity_dist",sim(col("features"))).orderBy("similarity_dist").show()
+    features.withColumn("similarity_dist",sim(col("features"))).orderBy("similarity_dist").drop("features").show(false)
 
   }
 
