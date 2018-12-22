@@ -96,7 +96,7 @@ class BlobToSinkSuiteParent extends TestBase
     deleteAllIndices()
 
     println("reading met images from blob")
-//    val blobkey = "gjsT+4WV9Dl8+bRhhiF5CPJI2fOqwXwllHrU4GAsLmOCMe+0q6ZoUpPkYTSQeH+Vo/HBuBoRcHCLDcjQnN/IVg=="
+//    val blobkey = "yourblobkey"
 
 //    sc.hadoopConfiguration.set("fs.azure", "org.apache.hadoop.fs.azure.NativeAzureFileSystem")
 //    sc.hadoopConfiguration.set("fs.wasb.impl", "org.apache.hadoop.fs.azure.NativeAzureFileSystem")
