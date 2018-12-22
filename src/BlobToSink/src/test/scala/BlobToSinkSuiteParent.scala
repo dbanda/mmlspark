@@ -9,14 +9,16 @@ import org.apache.spark.sql.types.StructField
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future, TimeoutException}
-
 import com.microsoft.ml.spark.Image.implicits._
 import com.microsoft.ml.spark.schema.ImageSchema
 import org.apache.commons.codec.binary.Base64
 import org.apache.commons.io.IOUtils
 import org.apache.spark.image.ImageFileFormat
-import org.apache.spark.sql.functions.{col, udf, to_json,monotonically_increasing_id,lit}
+import org.apache.spark.ml.linalg.Vectors
+import org.apache.spark.ml.linalg.Vectors._
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StringType
+
 import scala.math.random
 
 
@@ -166,16 +168,29 @@ class BlobToSinkSuiteParent extends TestBase
         "serviceName" -> testServiceName,
         "indexJson" -> json))
 
-//    val testdoc = "file:/home/vagrant/lib/datasets/Images/CIFAR/00002.png"
-//    findAndShowNN(testdoc)
+    val testdoc = "file:/home/vagrant/lib/datasets/Images/CIFAR/00002.png"
+    findAndShowNN(testdoc,df)
 
 
   }
 
-  def findAndShowNN(path: String): Unit = {
-    //TODO read from index nearest neighbors
-  }
+  def findAndShowNN(path: String, features: DataFrame): Unit = {
+    //TODO read from index nearest neighbors. doing it before writing now
+    println(s"finding nearest neighbors for $path")
+    val strToVec = (jsonArrStr:String) => {
+      val arr = jsonArrStr.replace("[","").replace("]","").split(",").map(x => x.toDouble)
+      Vectors.dense(arr)
+    }
 
-  val testdoc = ""
+    val cur_features = features.filter(r => (r.getString(2) == path)).first().getString(3)
+//    val sorted = features.rdd.sortBy(r => sqdist(strToVec(r.getString(3)), strToVec(cur_features)))
+
+    val sim = udf((feats:String) => {
+      sqdist(strToVec(feats), strToVec(cur_features))
+    })
+
+    features.withColumn("similarity_dist",sim(col("features"))).orderBy("similarity_dist").show()
+
+  }
 
 }
