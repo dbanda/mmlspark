@@ -15,7 +15,7 @@ import com.microsoft.ml.spark.schema.ImageSchema
 import org.apache.commons.codec.binary.Base64
 import org.apache.commons.io.IOUtils
 import org.apache.spark.image.ImageFileFormat
-import org.apache.spark.sql.functions.{col, udf, to_json,lit}
+import org.apache.spark.sql.functions.{col, udf, to_json,monotonically_increasing_id,lit}
 import org.apache.spark.sql.types.StringType
 import scala.math.random
 
@@ -58,9 +58,15 @@ class BlobToSinkSuiteParent extends TestBase
        |    "name": "$indexName",
        |    "fields": [
        |      {
-       |        "name": "path",
+       |        "name": "id",
        |        "type": "Edm.String",
        |        "key": true,
+       |        "facetable": false
+       |      },
+       |      {
+       |        "name": "path",
+       |        "type": "Edm.String",
+       |        "sortable": true,
        |        "facetable": false
        |      },
        |    {
@@ -130,23 +136,46 @@ class BlobToSinkSuiteParent extends TestBase
     val pathWithFeatures = features
       .withColumn("path", col("image.path"))
       .drop("image")
+      // TODO bug, using path as key fails. dont know why. need to add id col
+      .withColumn("id", monotonically_increasing_id)
+      .withColumn("id", col("id").cast(StringType))
       .withColumn("searchAction", lit("upload"))
       .withColumn("features", col("features").cast(StringType))
-    println("path with the features")
-    pathWithFeatures.printSchema()
-    println(pathWithFeatures)
-    println(pathWithFeatures.count())
 
-//    val df = createTestData(1000)
-    val df = pathWithFeatures
+
+    // TODO Bug? or Feature? df needs to have same order as schema
+    val orderedPathWithFeatures = pathWithFeatures.select("searchAction","id", "path", "features")
+    println("path with the features")
+    orderedPathWithFeatures.printSchema()
+    println(orderedPathWithFeatures)
+    println(orderedPathWithFeatures.count())
+    orderedPathWithFeatures.show(6)
+//    val testdata = createTestData(6)
+//    testdata.printSchema()
+//    testdata.show(6)
+//    val df = testdata
+    val df = orderedPathWithFeatures.toDF()
     val in = generateIndexName()
     println(s"Creating new index $in and addingdocs")
     val json = createSimpleIndexJson(in)
 
+    // TODO writer should throw error if fields are missing
     AzureSearchWriter.write(df,
       Map("subscriptionKey" -> azureSearchKey,
         "actionCol" -> "searchAction",
         "serviceName" -> testServiceName,
         "indexJson" -> json))
+
+//    val testdoc = "file:/home/vagrant/lib/datasets/Images/CIFAR/00002.png"
+//    findAndShowNN(testdoc)
+
+
   }
+
+  def findAndShowNN(path: String): Unit = {
+    //TODO read from index nearest neighbors
+  }
+
+  val testdoc = ""
+
 }
