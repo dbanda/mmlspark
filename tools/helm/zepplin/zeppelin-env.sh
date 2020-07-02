@@ -19,6 +19,7 @@
 # export JAVA_HOME=
 # export MASTER=spark://spark-master:7077                 		# Spark master url. eg. spark://master_addr:7077. Leave empty if you want to use local mode.
 export MASTER="${SPARK_MASTER:=local[*]}"
+export ZEPPELIN_ADDR="0.0.0.0"
 # export ZEPPELIN_JAVA_OPTS      		# Additional jvm options. for example, export ZEPPELIN_JAVA_OPTS="-Dspark.executor.memory=8g -Dspark.cores.max=16"
 # export ZEPPELIN_MEM            		# Zeppelin jvm mem options Default -Xms1024m -Xmx1024m -XX:MaxPermSize=512m
 # export ZEPPELIN_INTP_MEM       		# zeppelin interpreter process jvm mem options. Default -Xms1024m -Xmx1024m -XX:MaxPermSize=512m
